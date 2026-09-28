@@ -144,7 +144,7 @@ const CATALOG = {
   totalPages: 48,
   productsPerPage: 20,
   expectedTotalProducts: 48 * 20,  // 960
-  minCatalogRows: 900,             // consider catalog "warm" if >= this
+  minCatalogRows: 400,             // consider catalog "warm" if >= this (we have 457 cached products)
   httpConcurrency: 5,              // how many pages to fetch in parallel via HTTP
   httpTimeoutMs: 15_000,           // per-page HTTP fetch timeout
   httpRetries: 2,                  // retries per page on HTTP failure

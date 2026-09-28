@@ -9,8 +9,8 @@ WORKDIR /app
 # Copy backend package definitions
 COPY backend/package*.json ./
 
-# Install dependencies (production)
-RUN npm install --omit=dev
+# Install dependencies (production) and ensure browser binary matches
+RUN npm install --omit=dev && npx playwright install chromium
 
 # Copy backend application code
 COPY backend/ .
