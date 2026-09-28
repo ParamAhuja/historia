@@ -5,12 +5,30 @@ function outcomeBadgeClass(outcome) {
 }
 
 function formatUtc(iso) {
-  return new Date(iso).toISOString().replace('T', ' ').replace('Z', ' UTC');
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  } catch {
+    return iso;
+  }
+}
+
+function cleanMessage(text) {
+  if (!text) return '';
+  return text.replace(/\u001b\[[0-9;]*m/g, '').replace(/\s+/g, ' ').trim();
 }
 
 export default function ScrapeLogTable({ logs }) {
   if (!logs || logs.length === 0) {
-    return <p className="muted">No scrape attempts recorded yet for this product.</p>;
+    return (
+      <div className="empty-panel">
+        <p className="muted">No scrape attempts recorded yet for this product.</p>
+        <span className="small muted">
+          All automated and manual scrape runs (including retries and network failures) will be audited here.
+        </span>
+      </div>
+    );
   }
 
   return (
@@ -25,26 +43,41 @@ export default function ScrapeLogTable({ logs }) {
             <th>Stock</th>
             <th>Strategy</th>
             <th>Duration</th>
-            <th>Error</th>
+            <th>Details / Error</th>
           </tr>
         </thead>
         <tbody>
-          {logs.map((log) => (
-            <tr key={log.id}>
-              <td className="mono">{formatUtc(log.attempted_at_utc)}</td>
-              <td className="mono">#{log.attempt_number}</td>
-              <td>
-                <span className={outcomeBadgeClass(log.outcome)}>{log.outcome}</span>
-              </td>
-              <td className="mono">{log.outcome === 'success' ? `₹${log.normalized_price}` : '—'}</td>
-              <td className="mono">{log.outcome === 'success' ? log.normalized_stock : '—'}</td>
-              <td className="mono small">{log.parse_strategy || '—'}</td>
-              <td className="mono small">{log.duration_ms ? `${log.duration_ms}ms` : '—'}</td>
-              <td className="small error-cell">
-                {log.error_code ? `${log.error_code}: ${log.error_message || ''}` : '—'}
-              </td>
-            </tr>
-          ))}
+          {logs.map((log) => {
+            const errorText = cleanMessage(log.error_message);
+            return (
+              <tr key={log.id}>
+                <td className="mono small">{formatUtc(log.attempted_at_utc)}</td>
+                <td className="mono small">#{log.attempt_number}</td>
+                <td>
+                  <span className={outcomeBadgeClass(log.outcome)}>{log.outcome}</span>
+                </td>
+                <td className="mono">
+                  {log.outcome === 'success' && log.normalized_price !== null
+                    ? `₹${Number(log.normalized_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                    : '—'}
+                </td>
+                <td className="mono small">
+                  {log.outcome === 'success' ? (log.normalized_stock || 'unknown').replace('_', ' ') : '—'}
+                </td>
+                <td className="mono small">{log.parse_strategy || '—'}</td>
+                <td className="mono small">{log.duration_ms ? `${log.duration_ms}ms` : '—'}</td>
+                <td className="small error-cell">
+                  {log.error_code ? (
+                    <span title={errorText}>
+                      <strong>[{log.error_code}]</strong> {errorText}
+                    </span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

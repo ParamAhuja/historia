@@ -10,14 +10,17 @@ export default function Dashboard() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
 
   const [history, setHistory] = useState([]);
   const [logs, setLogs] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(null);
 
   const refreshList = useCallback(async () => {
     try {
+      setRefreshing(true);
       const data = await api.listTrackedItems();
       setItems(data.items || []);
       setLoadError(null);
@@ -25,22 +28,30 @@ export default function Dashboard() {
       setLoadError(err.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
     refreshList();
-    const interval = setInterval(refreshList, 60_000);
+    const interval = setInterval(refreshList, 45_000);
     return () => clearInterval(interval);
   }, [refreshList]);
 
   const loadDetail = useCallback(async (id) => {
-    if (!id) return;
+    if (!id) {
+      setHistory([]);
+      setLogs([]);
+      return;
+    }
     setDetailLoading(true);
+    setDetailError(null);
     try {
       const [h, l] = await Promise.all([api.getHistory(id), api.getLogs(id)]);
       setHistory(h.history || []);
       setLogs(l.logs || []);
+    } catch (err) {
+      setDetailError(`Failed to load history details: ${err.message}`);
     } finally {
       setDetailLoading(false);
     }
@@ -51,7 +62,11 @@ export default function Dashboard() {
   }, [selectedId, loadDetail]);
 
   function handleSelect(id) {
-    setSelectedId(id);
+    if (selectedId === id) {
+      setSelectedId(null); // toggle off
+    } else {
+      setSelectedId(id);
+    }
   }
 
   async function handleChanged() {
@@ -64,41 +79,110 @@ export default function Dashboard() {
   return (
     <div className="dashboard">
       <header className="dashboard-header">
-        <div>
-          <h1>Price Tracker</h1>
-          <p className="muted">Monitoring the INE mock storefront every 2 hours</p>
+        <div className="header-branding">
+          <div className="title-row">
+            <h1>INE Price Tracker</h1>
+            <span className="live-badge">Live Monitor</span>
+          </div>
+          <p className="muted">
+            Automated price &amp; stock tracker for INE mock storefront • 2-hour scheduled polling
+          </p>
         </div>
-        <ExportButton />
+        <div className="header-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={refreshList}
+            disabled={refreshing}
+            title="Refresh dashboard data"
+          >
+            {refreshing ? 'Refreshing…' : '↻ Refresh'}
+          </button>
+          <ExportButton />
+        </div>
       </header>
 
-      <ProductSearch onTracked={refreshList} />
+      <main className="dashboard-main">
+        <ProductSearch onTracked={refreshList} />
 
-      {loadError && <p className="error-text">Could not load tracked items: {loadError}</p>}
-      {loading ? (
-        <p className="muted">Loading tracked products…</p>
-      ) : (
-        <TrackedProductsList items={items} selectedId={selectedId} onSelect={handleSelect} onChanged={handleChanged} />
-      )}
+        {loadError && (
+          <div className="notice-banner notice-error">
+            Could not load tracked items: {loadError}
+          </div>
+        )}
 
-      {selectedItem && (
-        <section className="panel detail-panel">
-          <h2 className="panel-title">
-            {selectedItem.products.name} <span className="muted">— {selectedItem.selected_option_label}</span>
-          </h2>
+        {loading ? (
+          <div className="loading-state">
+            <p className="muted">Loading monitored products…</p>
+          </div>
+        ) : (
+          <TrackedProductsList
+            items={items}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            onChanged={handleChanged}
+          />
+        )}
 
-          {detailLoading ? (
-            <p className="muted">Loading history…</p>
-          ) : (
-            <>
-              <h3 className="section-subtitle">Price &amp; stock history</h3>
-              <PriceHistoryChart history={history} />
+        {selectedItem && (
+          <section className="panel detail-panel" id="detail-panel">
+            <div className="detail-panel-header">
+              <div>
+                <h2 className="panel-title detail-title">
+                  {selectedItem.products.name}{' '}
+                  <span className="variant-pill">{selectedItem.selected_option_label}</span>
+                </h2>
+                <div className="detail-meta small muted">
+                  <span>Product SKU: #{selectedItem.products.store_product_id}</span>
+                  {selectedItem.products.product_url && (
+                    <>
+                      <span>•</span>
+                      <a
+                        href={selectedItem.products.product_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="external-link"
+                      >
+                        Open on Store ↗
+                      </a>
+                    </>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => setSelectedId(null)}
+                title="Close details view"
+              >
+                ✕ Close
+              </button>
+            </div>
 
-              <h3 className="section-subtitle">Scrape log</h3>
-              <ScrapeLogTable logs={logs} />
-            </>
-          )}
-        </section>
-      )}
+            {detailError && <div className="notice-banner notice-error">{detailError}</div>}
+
+            {detailLoading ? (
+              <div className="loading-state">
+                <p className="muted">Retrieving price history and audit logs…</p>
+              </div>
+            ) : (
+              <>
+                <h3 className="section-subtitle">Price &amp; Stock Trend</h3>
+                <PriceHistoryChart history={history} />
+
+                <h3 className="section-subtitle">Scrape Attempt Audit Log</h3>
+                <ScrapeLogTable logs={logs} />
+              </>
+            )}
+          </section>
+        )}
+      </main>
+
+      <footer className="dashboard-footer">
+        <p className="small muted">
+          INE Software Engineering Intern Assignment • Unattended Scraper with Automated Retries &amp; Resiliency
+        </p>
+      </footer>
     </div>
   );
 }

@@ -68,6 +68,13 @@ async function finishScrapeRun(id, { status, itemsTotal, itemsSuccess, itemsFail
   return data;
 }
 
+function sanitizeErrorMessage(msg) {
+  if (!msg) return null;
+  // Strip ANSI color escape sequences and compress multiple spaces/newlines
+  const cleaned = msg.replace(/\u001b\[[0-9;]*m/g, '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned.length > 300 ? `${cleaned.slice(0, 300)}…` : cleaned;
+}
+
 async function recordAttempt(payload) {
   const { data, error } = await supabase
     .from('scrape_attempts')
@@ -78,7 +85,7 @@ async function recordAttempt(payload) {
       attempt_number: payload.attemptNumber,
       outcome: payload.outcome,
       error_code: payload.errorCode || null,
-      error_message: payload.errorMessage || null,
+      error_message: sanitizeErrorMessage(payload.errorMessage),
       raw_price_text: payload.rawPriceText || null,
       raw_stock_text: payload.rawStockText || null,
       normalized_price: payload.normalizedPrice ?? null,

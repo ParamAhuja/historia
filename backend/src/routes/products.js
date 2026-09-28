@@ -57,7 +57,7 @@ router.get('/search', async (req, res, next) => {
  * Fetches available options for a product. Tries HTTP+Cheerio first (< 1s),
  * falls back to Playwright only if the page requires JS rendering.
  */
-router.get('/options', async (req, res, next) => {
+router.get('/options', async (req, res) => {
   const url = (req.query.url || '').toString();
   const requestId = req.requestId;
 
@@ -65,11 +65,11 @@ router.get('/options', async (req, res, next) => {
     return res.status(400).json({ error: 'Query parameter "url" is required', requestId });
   }
 
+  const startedAt = Date.now();
   const browserManager = new BrowserManager({});
   try {
     const { page, context } = await browserManager.newPage();
     try {
-      const startedAt = Date.now();
       const options = await fetchProductOptions(page, url);
       const durationMs = Date.now() - startedAt;
 
@@ -80,13 +80,30 @@ router.get('/options', async (req, res, next) => {
         durationMs,
       });
 
-      return res.json({ url, options, durationMs });
+      return res.json({ url, options, isFallback: false, durationMs });
     } finally {
       await context.close().catch(() => {});
     }
   } catch (err) {
-    log.error('product_options_failed', { requestId, url, error: err });
-    return next(err);
+    const durationMs = Date.now() - startedAt;
+    log.warn('product_options_fetch_failed_using_fallback', {
+      requestId,
+      url,
+      error: err.message,
+      durationMs,
+    });
+
+    return res.json({
+      url,
+      options: [
+        { label: 'Standard / Default', key: 'default' },
+        { label: 'Variant A', key: 'variant_a' },
+        { label: 'Variant B', key: 'variant_b' },
+      ],
+      isFallback: true,
+      notice: 'Live store is currently unreachable. Fallback options provided so tracking can still be configured.',
+      durationMs,
+    });
   } finally {
     await browserManager.close();
   }
