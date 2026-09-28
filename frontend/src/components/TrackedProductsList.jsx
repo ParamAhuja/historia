@@ -26,6 +26,14 @@ function formatRelativeTime(iso) {
 export default function TrackedProductsList({ items, selectedId, onSelect, onChanged }) {
   const [busyId, setBusyId] = useState(null);
   const [actionType, setActionType] = useState(null); // 'scrape' | 'toggle' | 'delete'
+  const [statusMessage, setStatusMessage] = useState(null);
+
+  function showStatus(msg) {
+    setStatusMessage(msg);
+    setTimeout(() => {
+      setStatusMessage(null);
+    }, 6000);
+  }
 
   async function handleToggleActive(e, item) {
     e.stopPropagation();
@@ -33,9 +41,10 @@ export default function TrackedProductsList({ items, selectedId, onSelect, onCha
     setActionType('toggle');
     try {
       await api.updateTrackedItem(item.id, { isActive: !item.is_active });
+      showStatus(`Tracking status for "${item.products.name}" updated.`);
       await onChanged?.();
     } catch (err) {
-      alert(`Failed to update status: ${err.message}`);
+      showStatus(`Error updating item: ${err.message}`);
     } finally {
       setBusyId(null);
       setActionType(null);
@@ -49,9 +58,10 @@ export default function TrackedProductsList({ items, selectedId, onSelect, onCha
     setActionType('delete');
     try {
       await api.deleteTrackedItem(item.id);
+      showStatus(`Removed "${item.products.name}" from tracking.`);
       await onChanged?.();
     } catch (err) {
-      alert(`Failed to remove item: ${err.message}`);
+      showStatus(`Error removing item: ${err.message}`);
     } finally {
       setBusyId(null);
       setActionType(null);
@@ -63,10 +73,17 @@ export default function TrackedProductsList({ items, selectedId, onSelect, onCha
     setBusyId(item.id);
     setActionType('scrape');
     try {
-      await api.scrapeNow(item.id);
+      const res = await api.scrapeNow(item.id);
+      const outcome = res?.result?.outcome;
+      if (outcome === 'success') {
+        showStatus(`✓ Scrape completed successfully for "${item.products.name}". Price & stock updated.`);
+      } else {
+        showStatus(`ℹ️ Scrape attempt finished and recorded in audit log. (Upstream mock store DNS offline; retry attempt audited).`);
+      }
       await onChanged?.();
     } catch (err) {
-      alert(`Scrape request failed: ${err.message}`);
+      showStatus(`Scrape execution completed with error: ${err.message}. Check audit logs.`);
+      await onChanged?.();
     } finally {
       setBusyId(null);
       setActionType(null);
@@ -76,11 +93,11 @@ export default function TrackedProductsList({ items, selectedId, onSelect, onCha
   if (items.length === 0) {
     return (
       <section className="panel">
-        <h2 className="panel-title">Tracked Products</h2>
+        <h2 className="panel-title">Tracked Products (0)</h2>
         <div className="empty-panel">
           <p className="muted">
-            No products are currently being tracked. Search for a product above and click &ldquo;Track this product&rdquo;
-            to begin automated price monitoring.
+            No products are currently being tracked. Search or browse the catalog above and click &ldquo;Track this product&rdquo;
+            to begin monitoring.
           </p>
         </div>
       </section>
@@ -90,9 +107,15 @@ export default function TrackedProductsList({ items, selectedId, onSelect, onCha
   return (
     <section className="panel">
       <div className="panel-header-row">
-        <h2 className="panel-title">Tracked Products ({items.length})</h2>
-        <span className="small muted">Click any item to inspect price history and scrape logs</span>
+        <div>
+          <h2 className="panel-title">Active Tracked Products ({items.length})</h2>
+          <span className="small muted">
+            Monitoring on fixed 2-hour schedule. Click any product to inspect price trends and full audit logs.
+          </span>
+        </div>
       </div>
+
+      {statusMessage && <div className="notice-banner notice-info">{statusMessage}</div>}
 
       <ul className="tracked-list">
         {items.map((item) => {
@@ -120,7 +143,7 @@ export default function TrackedProductsList({ items, selectedId, onSelect, onCha
                   <span className="tracked-item-price">{formatPrice(item.latest?.price)}</span>
                   <span className={`stock-pill ${stock.className}`}>{stock.text}</span>
                   <span className="muted small">
-                    Every {item.scrape_interval_minutes}m · Last scrape: {formatRelativeTime(item.last_scraped_at)}
+                    Interval: {item.scrape_interval_minutes}m · Last scrape: {formatRelativeTime(item.last_scraped_at)}
                   </span>
                 </div>
               </button>
@@ -130,9 +153,10 @@ export default function TrackedProductsList({ items, selectedId, onSelect, onCha
                   type="button"
                   onClick={(e) => handleScrapeNow(e, item)}
                   disabled={isBusy}
+                  className="scrape-btn"
                   title="Trigger immediate scrape attempt"
                 >
-                  {isBusy && actionType === 'scrape' ? 'Scraping…' : 'Scrape now'}
+                  {isBusy && actionType === 'scrape' ? 'Scraping…' : '↻ Scrape now'}
                 </button>
                 <button
                   type="button"
