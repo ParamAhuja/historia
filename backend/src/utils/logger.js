@@ -1,4 +1,4 @@
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID } = require('crypto');
 
 /**
  * Structured JSON logger with correlation-ID propagation.
@@ -97,7 +97,7 @@ function createLogger(component = 'app', context = {}) {
      * Generates a new correlation ID (UUID v4). Useful for creating runId or
      * requestId when one isn't already provided by the framework.
      */
-    generateId: () => uuidv4(),
+    generateId: () => randomUUID(),
   };
 
   return logger;

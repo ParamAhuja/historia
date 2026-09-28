@@ -1,6 +1,10 @@
 # Use official Playwright image which includes Chromium and all OS dependencies
 FROM mcr.microsoft.com/playwright:v1.47.2-jammy
 
+# Update Node.js to 22.x LTS as required by @supabase/supabase-js
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs
+
 WORKDIR /app
 
 # Copy package definitions
