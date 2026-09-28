@@ -23,6 +23,8 @@ export default function ProductSearch({ onTracked }) {
     setSelectedProduct(null);
     try {
       const data = await api.searchProducts(query.trim());
+      // Debug: surface API response in browser console to help diagnose empty UI
+      console.debug('search response', data);
       setResults(data.results || []);
     } catch (err) {
       setSearchError(err.message);

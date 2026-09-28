@@ -1,22 +1,38 @@
 const app = require('./app');
 const env = require('./config/env');
-const logger = require('./utils/logger');
+const { createLogger } = require('./utils/logger');
+const { ensureCatalogWarm } = require('./services/catalogService');
+
+const log = createLogger('server');
 
 const server = app.listen(env.PORT, () => {
-  logger.info('server_started', { port: env.PORT, env: env.NODE_ENV });
+  log.info('server_started', { port: env.PORT, env: env.NODE_ENV });
+
+  // Trigger catalog warmup in the background — NEVER block server startup.
+  // The search endpoint works immediately (returns whatever is in the DB),
+  // and the catalog fills in asynchronously.
+  ensureCatalogWarm({ force: false, headed: false }).catch((error) => {
+    log.warn('catalog_warmup_failed', { error: error });
+  });
 });
 
 // Never let one unexpected rejection (e.g. a stray Playwright promise from a
-// background scrape run) silently kill the whole process - log it and keep
-// serving requests. The scraper's own try/catch/finally blocks already
-// guarantee locks get released and attempts get recorded even on failure;
-// this is just a last-resort safety net for genuinely unforeseen bugs.
+// background scrape run) silently kill the whole process — log it with full
+// stack trace and keep serving requests.
 process.on('unhandledRejection', (reason) => {
-  logger.error('unhandled_rejection', { reason: reason?.message || String(reason) });
+  log.error('unhandled_rejection', {
+    error: reason instanceof Error ? reason : new Error(String(reason)),
+  });
+});
+
+process.on('uncaughtException', (error) => {
+  log.error('uncaught_exception', { error: error });
+  // Give the logger a moment to flush, then exit
+  setTimeout(() => process.exit(1), 1000);
 });
 
 process.on('SIGTERM', () => {
-  logger.info('server_shutting_down');
+  log.info('server_shutting_down');
   server.close(() => process.exit(0));
 });
 

@@ -1,5 +1,6 @@
 cd backend
 npm install
+npx playwright install chromium
 cd ..
 cd frontend
 npm install

@@ -1,4 +1,6 @@
-const logger = require('./logger');
+const { createLogger } = require('./logger');
+
+const log = createLogger('retry');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -48,13 +50,14 @@ async function retryWithBackoff({
       const attemptsLeft = maxAttempts - attempt;
       const willRetry = kind === 'transient' && attemptsLeft > 0;
 
-      logger.warn('retry_attempt_failed', {
+      log.warn('retry_attempt_failed', {
         label,
         attempt,
         maxAttempts,
         kind,
         willRetry,
-        error: err.message,
+        errorCode: err.code || err.name,
+        errorMessage: err.message,
       });
 
       if (onAttemptResult) {
@@ -62,10 +65,18 @@ async function retryWithBackoff({
       }
 
       if (!willRetry) {
+        log.info('retry_exhausted_or_permanent', {
+          label,
+          attempt,
+          maxAttempts,
+          kind,
+          errorMessage: err.message,
+        });
         return { ok: false, error: err, attempts: attempt };
       }
 
       const delay = backoffDelay(attempt, baseMs, maxMs);
+      log.debug('retry_backoff_wait', { label, attempt, delayMs: delay });
       await sleep(delay);
     }
   }

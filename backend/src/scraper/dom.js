@@ -1,7 +1,11 @@
+const { createLogger } = require('../utils/logger');
+
+const log = createLogger('dom');
+
 /**
  * Tries each selector in `selectors` (in order) against `scope` (a Page or
  * Locator). Returns the first one with at least one visible match, along
- * with which selector string matched - this is stored as `parse_strategy` so
+ * with which selector string matched — this is stored as `parse_strategy` so
  * the scrape log shows exactly which fallback level is being used in
  * production, making it obvious the moment the site's markup changes.
  */
@@ -15,7 +19,7 @@ async function firstMatch(scope, selectors, { timeoutMs = 2000 } = {}) {
         return { locator, matchedSelector: selector };
       }
     } catch {
-      // this selector didn't match in time - try the next fallback
+      // this selector didn't match in time — try the next fallback
     }
   }
   return null;
