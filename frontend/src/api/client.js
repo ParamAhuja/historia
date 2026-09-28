@@ -1,22 +1,32 @@
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+const rawBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+const BASE_URL = rawBase.replace(/\/+$/, ''); // Strip trailing slash to prevent double-slash issues
 
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
-  if (!res.ok) {
-    let message = `Request failed (${res.status})`;
-    try {
-      const body = await res.json();
-      if (body.error) message = body.error;
-    } catch {
-      // response wasn't JSON - keep the generic message
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+    if (!res.ok) {
+      let message = `Request failed (${res.status})`;
+      try {
+        const body = await res.json();
+        if (body.error) message = body.error;
+      } catch {
+        // response wasn't JSON - keep generic message
+      }
+      throw new Error(message);
     }
-    throw new Error(message);
+    if (res.status === 204) return null;
+    return res.json();
+  } catch (err) {
+    if (err.name === 'TypeError' && err.message.toLowerCase().includes('fetch')) {
+      throw new Error(
+        `Unable to reach API server at ${BASE_URL}. If your backend is hosted on Render's free tier, it may be waking up from sleep (~45s), or verify that VITE_API_BASE_URL is configured in Vercel settings.`
+      );
+    }
+    throw err;
   }
-  if (res.status === 204) return null;
-  return res.json();
 }
 
 export const api = {

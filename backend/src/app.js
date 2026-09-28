@@ -20,13 +20,35 @@ app.use(requestId);
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow non-browser requests (curl, cron-job.org) which send no Origin header.
-      if (!origin || env.CORS_ORIGINS.includes(origin)) return callback(null, true);
-      log.warn('cors_rejected', { origin });
+      // Allow non-browser requests (curl, cron-job.org, health checks)
+      if (!origin) return callback(null, true);
+
+      // If '*' is in allowed origins, permit all origins
+      if (env.CORS_ORIGINS.includes('*') || env.CORS_ORIGINS.some((o) => o.trim() === '*')) {
+        return callback(null, true);
+      }
+
+      // Check configured origins
+      if (env.CORS_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // Automatically allow all Vercel domains (*.vercel.app) and localhost
+      if (origin.endsWith('.vercel.app') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+        return callback(null, true);
+      }
+
+      log.warn('cors_rejected', { origin, allowed: env.CORS_ORIGINS });
       return callback(new Error(`Origin ${origin} not allowed by CORS`));
     },
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'x-cron-secret'],
+    credentials: true,
   }),
 );
+
+// Explicit preflight handling
+app.options('*', cors());
 
 app.use(express.json());
 
