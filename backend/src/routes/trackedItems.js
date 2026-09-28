@@ -184,7 +184,16 @@ router.post('/:id/scrape-now', async (req, res, next) => {
       attempts: result.attempts,
     });
 
-    res.json({ result });
+    // Retrieve fresh item with last known price from DB
+    const freshItems = await trackedItemService.listTrackedItems();
+    const updated = freshItems.find((i) => i.id === trackedItemId) || item;
+
+    res.json({
+      result,
+      item: updated,
+      lastKnownPrice: updated.latest?.price,
+      lastKnownStock: updated.latest?.stock,
+    });
   } catch (err) {
     log.error('manual_scrape_failed', {
       requestId: req.requestId,

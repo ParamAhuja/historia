@@ -119,6 +119,9 @@ export default function Dashboard() {
       </div>
 
       <main className="dashboard-main">
+        {/* Product Search & Catalog Browser */}
+        <ProductSearch onTracked={refreshList} />
+
         {/* Tracked Products List */}
         {loadError && (
           <div className="notice-banner notice-error">
@@ -194,9 +197,6 @@ export default function Dashboard() {
             )}
           </section>
         )}
-
-        {/* Product Search & Catalog Browser */}
-        <ProductSearch onTracked={refreshList} />
       </main>
 
       <footer className="dashboard-footer">

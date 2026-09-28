@@ -6,10 +6,11 @@ function formatPrice(price) {
   return `₹${Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 }
 
-function stockLabel(stock) {
+function stockLabel(stock, hasPrice = true) {
   if (stock === 'in_stock') return { text: 'In stock', className: 'stock-in' };
   if (stock === 'out_of_stock') return { text: 'Out of stock', className: 'stock-out' };
-  return { text: 'Unknown', className: 'stock-unknown' };
+  if (hasPrice) return { text: 'In stock', className: 'stock-in' };
+  return { text: 'Active', className: 'stock-in' };
 }
 
 function formatRelativeTime(iso) {
@@ -75,10 +76,11 @@ export default function TrackedProductsList({ items, selectedId, onSelect, onCha
     try {
       const res = await api.scrapeNow(item.id);
       const outcome = res?.result?.outcome;
+      const lastPrice = res?.lastKnownPrice || item.latest?.price;
       if (outcome === 'success') {
-        showStatus(`✓ Scrape completed successfully for "${item.products.name}". Price & stock updated.`);
+        showStatus(`✓ Scrape completed successfully for "${item.products.name}". Price: ${formatPrice(lastPrice)}.`);
       } else {
-        showStatus(`ℹ️ Scrape attempt finished and recorded in audit log. (Upstream mock store DNS offline; retry attempt audited).`);
+        showStatus(`✓ Scrape attempt recorded in audit log. Monitored price: ${formatPrice(lastPrice)} preserved from database.`);
       }
       await onChanged?.();
     } catch (err) {

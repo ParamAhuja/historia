@@ -30,7 +30,15 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  searchProducts: (q) => request(`/api/products/search?q=${encodeURIComponent(q)}`),
+  searchProducts: (q = '', category = '') => {
+    const params = new URLSearchParams();
+    if (q && q.trim()) params.set('q', q.trim());
+    if (category && category.trim() && category.toUpperCase() !== 'ALL') {
+      params.set('category', category.trim());
+    }
+    const qs = params.toString();
+    return request(`/api/products/search${qs ? `?${qs}` : ''}`);
+  },
   fetchOptions: (url) => request(`/api/products/options?url=${encodeURIComponent(url)}`),
 
   listTrackedItems: () => request('/api/tracked-items'),

@@ -71,6 +71,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Root endpoint for health probers (Render, uptime checks) ─────────
+app.get('/', (req, res) => {
+  res.json({
+    name: 'INE Product Price Tracker API',
+    status: 'online',
+    version: '2.0.0',
+    documentation: '/api/health',
+  });
+});
+
 // ── Routes ─────────────────────────────────────────────────────────────
 app.use('/api/health', healthRoutes);
 app.use('/api/products', productRoutes);

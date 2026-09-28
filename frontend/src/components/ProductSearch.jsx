@@ -1,11 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 
-const POPULAR_CATEGORIES = ['Tablets', 'Gaming', 'Cameras', 'Networking', 'Fitness', 'Lighting', 'Instruments', 'Office'];
+const CATEGORIES = [
+  'All',
+  'Tablets',
+  'Gaming',
+  'Cameras',
+  'Networking',
+  'Fitness',
+  'Lighting',
+  'Instruments',
+  'Office',
+  'Outdoor',
+];
 
 export default function ProductSearch({ onTracked }) {
   const [query, setQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState('Tablets');
+  const [selectedCategory, setSelectedCategory] = useState('All');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -22,23 +33,18 @@ export default function ProductSearch({ onTracked }) {
   const [formError, setFormError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
 
-  // Auto-populate with initial featured category on mount
-  useEffect(() => {
-    executeSearch('Tablets', true);
-  }, []);
+  const debounceTimerRef = useRef(null);
 
-  async function executeSearch(searchTerm, isCategoryClick = false) {
-    const term = searchTerm.trim();
-    if (!term) return;
-
+  const executeSearch = useCallback(async (text, cat) => {
     setSearching(true);
     setHasSearched(true);
     setSearchError(null);
     setCatalogMessage(null);
-    setSelectedProduct(null);
+
+    const activeCat = cat === 'All' ? '' : cat;
 
     try {
-      const data = await api.searchProducts(term);
+      const data = await api.searchProducts(text, activeCat);
       setResults(data.results || []);
       if (data.message) {
         setCatalogMessage(data.message);
@@ -49,19 +55,52 @@ export default function ProductSearch({ onTracked }) {
     } finally {
       setSearching(false);
     }
-  }
+  }, []);
 
-  function handleSearchSubmit(e) {
+  // Initial load on mount: fetch catalog products
+  useEffect(() => {
+    executeSearch('', 'All');
+  }, [executeSearch]);
+
+  // Debounced live search when query text changes
+  const handleQueryChange = (e) => {
+    const val = e.target.value;
+    setQuery(val);
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      executeSearch(val, selectedCategory);
+    }, 280);
+  };
+
+  const handleSearchSubmit = (e) => {
     e.preventDefault();
-    setActiveCategory(null);
-    executeSearch(query);
-  }
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    executeSearch(query, selectedCategory);
+  };
 
-  function handleCategoryClick(cat) {
-    setActiveCategory(cat);
-    setQuery(cat);
-    executeSearch(cat, true);
-  }
+  const handleCategoryFilter = (cat) => {
+    // If clicking the active category (other than 'All'), toggle back to 'All'
+    const nextCat = selectedCategory === cat && cat !== 'All' ? 'All' : cat;
+    setSelectedCategory(nextCat);
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    executeSearch(query, nextCat);
+  };
+
+  const handleClearQuery = () => {
+    setQuery('');
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    executeSearch('', selectedCategory);
+  };
 
   async function handleSelectProduct(product) {
     setSelectedProduct(product);
@@ -81,15 +120,15 @@ export default function ProductSearch({ onTracked }) {
       if (opts.length > 0) {
         setSelectedOptionKey(opts[0].key);
       }
-    } catch (err) {
-      // Fallback in case options endpoint fails
+    } catch {
+      // Fallback options if target store is offline
       const fallbackOpts = [
         { label: 'Standard / Default', key: 'default' },
         { label: 'Variant A', key: 'variant_a' },
       ];
       setOptions(fallbackOpts);
       setSelectedOptionKey('default');
-      setOptionsNotice('Live store is unreachable. Standard tracking options have been assigned.');
+      setOptionsNotice('Store storefront is unreachable. Standard tracking options assigned.');
     } finally {
       setOptionsLoading(false);
     }
@@ -116,7 +155,7 @@ export default function ProductSearch({ onTracked }) {
       const trackedName = selectedProduct.name;
       setSelectedProduct(null);
       setOptions([]);
-      setSuccessMessage(`✓ Successfully added "${trackedName}" (${label}) to your tracking list.`);
+      setSuccessMessage(`✓ Successfully started tracking "${trackedName}" (${label}).`);
 
       setTimeout(() => {
         setSuccessMessage(null);
@@ -130,13 +169,28 @@ export default function ProductSearch({ onTracked }) {
     }
   }
 
+  // Summary header text for current filter state
+  let resultsMetaText = '';
+  const hasText = Boolean(query.trim());
+  const hasCat = selectedCategory !== 'All';
+
+  if (hasText && hasCat) {
+    resultsMetaText = `Showing ${results.length} products matching "${query}" in ${selectedCategory}:`;
+  } else if (hasText) {
+    resultsMetaText = `Showing ${results.length} products matching "${query}":`;
+  } else if (hasCat) {
+    resultsMetaText = `Showing ${results.length} products in ${selectedCategory}:`;
+  } else {
+    resultsMetaText = `Showing ${results.length} catalog products:`;
+  }
+
   return (
     <section className="panel search-panel">
       <div className="panel-header-row">
         <div>
           <h2 className="panel-title">Explore Store Catalog &amp; Track Products</h2>
           <p className="muted small">
-            457+ products indexed in database. Instant search with partial and fuzzy matching.
+            457+ products indexed in database. Instant search with partial and fuzzy matching combined with category filters.
           </p>
         </div>
       </div>
@@ -144,27 +198,52 @@ export default function ProductSearch({ onTracked }) {
       {successMessage && <div className="notice-banner notice-success">{successMessage}</div>}
 
       <form className="search-row" onSubmit={handleSearchSubmit}>
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by keyword, product name, or SKU (e.g. tablet, camera, headphones, router)"
-          aria-label="Search products"
-        />
+        <div className="search-input-wrap" style={{ flex: 1, position: 'relative', display: 'flex' }}>
+          <input
+            type="text"
+            value={query}
+            onChange={handleQueryChange}
+            placeholder="Search keyword, name, brand, or SKU (e.g. tablet, camera, headset, quarrow, 2176)"
+            aria-label="Search products"
+            style={{ width: '100%', paddingRight: query ? '34px' : '12px' }}
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={handleClearQuery}
+              title="Clear search text"
+              style={{
+                position: 'absolute',
+                right: '8px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                padding: '4px',
+                cursor: 'pointer',
+                fontSize: '14px',
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
         <button type="submit" className="primary" disabled={searching}>
-          {searching ? 'Searching…' : 'Search'}
+          {searching ? 'Filtering…' : 'Search'}
         </button>
       </form>
 
-      {/* Category quick filter chips */}
+      {/* Category filter buttons combined with search query */}
       <div className="category-chips-row">
-        <span className="small muted">Quick Browse:</span>
-        {POPULAR_CATEGORIES.map((cat) => (
+        <span className="small muted">Filter by Department:</span>
+        {CATEGORIES.map((cat) => (
           <button
             key={cat}
             type="button"
-            className={`category-chip ${activeCategory === cat ? 'active' : ''}`}
-            onClick={() => handleCategoryClick(cat)}
+            className={`category-chip ${selectedCategory === cat ? 'active' : ''}`}
+            onClick={() => handleCategoryFilter(cat)}
+            title={selectedCategory === cat && cat !== 'All' ? 'Click to clear filter' : `Filter by ${cat}`}
           >
             {cat}
           </button>
@@ -178,10 +257,11 @@ export default function ProductSearch({ onTracked }) {
       {hasSearched && !searching && results.length === 0 && !searchError && (
         <div className="empty-panel">
           <p className="muted">
-            No products found matching &ldquo;{query}&rdquo;.
+            No products found matching &ldquo;{query}&rdquo;
+            {selectedCategory !== 'All' ? ` in ${selectedCategory}` : ''}.
           </p>
           <span className="small muted">
-            Try clicking one of the category buttons above or search for &ldquo;tablet&rdquo;, &ldquo;camera&rdquo;, or &ldquo;router&rdquo;.
+            Try adjusting your search terms or selecting &ldquo;All&rdquo; above.
           </span>
         </div>
       )}
@@ -189,7 +269,7 @@ export default function ProductSearch({ onTracked }) {
       {results.length > 0 && (
         <div className="search-results-wrap">
           <div className="results-header-meta">
-            <span className="small muted">Showing {results.length} catalog products:</span>
+            <span className="small muted">{resultsMetaText}</span>
           </div>
 
           <div className="catalog-grid">
@@ -197,6 +277,7 @@ export default function ProductSearch({ onTracked }) {
               const isSelected = selectedProduct?.storeProductId === r.storeProductId;
               const dept = r.metadata?.department;
               const brand = r.metadata?.brand;
+              const basePrice = r.metadata?.base_price;
 
               return (
                 <div
@@ -215,7 +296,10 @@ export default function ProductSearch({ onTracked }) {
                   </div>
                   <h4 className="card-name">{r.name}</h4>
                   <div className="card-bottom">
-                    {brand && <span className="brand-name">{brand}</span>}
+                    <span className="brand-name">
+                      {brand || 'Store Item'}
+                      {basePrice && ` · ₹${Number(basePrice).toFixed(2)}`}
+                    </span>
                     <span className="action-link">{isSelected ? 'Configuring…' : 'Track Product →'}</span>
                   </div>
                 </div>
@@ -223,7 +307,7 @@ export default function ProductSearch({ onTracked }) {
             })}
           </div>
           {results.length > 12 && (
-            <p className="small muted centered-text" style={{ marginTop: '12px' }}>
+            <p className="small muted centered-text" style={{ marginTop: '14px' }}>
               + {results.length - 12} more matching items in catalog. Use the search bar above to narrow results.
             </p>
           )}
@@ -234,7 +318,10 @@ export default function ProductSearch({ onTracked }) {
         <div className="track-form" id="track-config-form">
           <div className="track-form-header">
             <h3>Configure Tracking for: <em>{selectedProduct.name}</em></h3>
-            <span className="small muted">SKU: #{selectedProduct.storeProductId}</span>
+            <span className="small muted">
+              SKU: #{selectedProduct.storeProductId}
+              {selectedProduct.metadata?.base_price && ` · Catalog Price: ₹${Number(selectedProduct.metadata.base_price).toFixed(2)}`}
+            </span>
           </div>
 
           {optionsLoading && <p className="muted">Loading available product variants…</p>}

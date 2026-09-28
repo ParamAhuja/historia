@@ -19,20 +19,18 @@ const log = createLogger('routes/products');
  */
 router.get('/search', async (req, res, next) => {
   const q = (req.query.q || '').toString();
+  const category = (req.query.category || '').toString();
   const requestId = req.requestId;
-
-  if (!q.trim()) {
-    return res.status(400).json({ error: 'Query parameter "q" is required', requestId });
-  }
 
   try {
     const startedAt = Date.now();
-    const searchResult = await searchProducts(q);
+    const searchResult = await searchProducts(q, { category });
     const durationMs = Date.now() - startedAt;
 
     log.info('product_search_completed', {
       requestId,
       q,
+      category,
       results: searchResult.results.length,
       catalogStatus: searchResult.catalogStatus,
       durationMs,
@@ -40,13 +38,14 @@ router.get('/search', async (req, res, next) => {
 
     return res.json({
       query: q,
+      category: category || null,
       results: searchResult.results,
       catalogStatus: searchResult.catalogStatus,
       message: searchResult.message || undefined,
       durationMs,
     });
   } catch (err) {
-    log.error('product_search_failed', { requestId, q, error: err });
+    log.error('product_search_failed', { requestId, q, category, error: err });
     return next(err);
   }
 });

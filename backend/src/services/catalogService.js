@@ -53,60 +53,242 @@ async function upsertCatalogRows(rows) {
 
 // ─── Search (database-only, < 200ms) ───────────────────────────────
 
-/**
- * Searches the pre-synced product catalog in Supabase. This is the PRIMARY
- * search function — it never launches a browser or touches the mock store.
- *
- * Uses PostgreSQL ILIKE for case-insensitive substring matching.
- * If trigram indexes are installed, this will be fast even on large catalogs.
- *
- * Target latency: < 200ms (down from ~120s with the old Playwright approach).
- */
-async function searchCatalogProducts(query, { limit = 50 } = {}) {
-  const q = (query || '').trim().toLowerCase();
+// ── In-memory catalog cache for <5ms instant search ─────────────────
+let catalogCache = null;
+let catalogCacheLoadedAt = 0;
+const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
 
-  if (!q) {
-    // No query — return most recently updated products
-    const { data, error } = await supabase
-      .from('products')
-      .select('id, store_product_id, name, product_url, metadata_json, updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    return formatSearchResults(data || []);
+function invalidateCatalogCache() {
+  catalogCache = null;
+  catalogCacheLoadedAt = 0;
+}
+
+async function getCachedCatalog() {
+  const now = Date.now();
+  if (catalogCache && now - catalogCacheLoadedAt < CATALOG_CACHE_TTL_MS) {
+    return catalogCache;
   }
-
-  // Strategy 1: ILIKE search on name (works without pg_trgm extension)
   const { data, error } = await supabase
     .from('products')
     .select('id, store_product_id, name, product_url, metadata_json, updated_at')
-    .ilike('name', `%${q}%`)
-    .order('name', { ascending: true })
-    .limit(limit);
+    .order('name', { ascending: true });
+  if (error) {
+    if (catalogCache) return catalogCache;
+    throw error;
+  }
+  catalogCache = data || [];
+  catalogCacheLoadedAt = now;
+  return catalogCache;
+}
 
-  if (error) throw error;
+// ── Text & Fuzzy Matching Helpers ────────────────────────────────────
 
-  let results = data || [];
+/**
+ * Normalizes a word token for search:
+ * - lowercase
+ * - strips non-alphanumeric characters
+ * - stems common English plural and gerund suffixes (e.g. tablets -> tablet, cameras -> camera, watches -> watch)
+ */
+function normalizeToken(token) {
+  if (!token) return '';
+  let t = token.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (t.endsWith('ies') && t.length > 4) t = t.slice(0, -3) + 'y';
+  else if (t.endsWith('es') && t.length > 4) t = t.slice(0, -2);
+  else if (t.endsWith('s') && !t.endsWith('ss') && t.length > 3) t = t.slice(0, -1);
+  return t;
+}
 
-  // Strategy 2: If name search returned nothing, search in metadata fields too
-  if (results.length === 0) {
-    const { data: allData, error: allErr } = await supabase
-      .from('products')
-      .select('id, store_product_id, name, product_url, metadata_json, updated_at')
-      .order('updated_at', { ascending: false });
-    if (allErr) throw allErr;
+/**
+ * Computes standard Levenshtein distance between two strings.
+ */
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
 
-    results = (allData || []).filter((row) => {
-      const meta = row.metadata_json || {};
-      const haystack = [row.name, row.store_product_id, meta.brand, meta.sku, meta.department]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(q);
-    }).slice(0, limit);
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+/**
+ * Evaluates how closely a search token matches a target word:
+ * - Returns match score (0 if no match, up to 30 for exact match)
+ */
+function tokenMatchesWord(token, word) {
+  const normToken = normalizeToken(token);
+  const normWord = normalizeToken(word);
+  if (!normToken || !normWord) return 0;
+
+  // Exact match
+  if (normWord === normToken) return 30;
+
+  // Prefix match
+  if (normWord.startsWith(normToken)) return 22;
+
+  // Substring match
+  if (normWord.includes(normToken)) return 16;
+
+  // Fuzzy match with Levenshtein distance:
+  // length 4-6 allows distance 1 (e.g. camra -> camera, hedset -> headset)
+  // length 7+ allows distance 2 (e.g. brightwel -> brightwell)
+  const maxDistance = normToken.length >= 7 ? 2 : normToken.length >= 4 ? 1 : 0;
+  if (maxDistance > 0 && Math.abs(normToken.length - normWord.length) <= maxDistance) {
+    if (levenshtein(normToken, normWord) <= maxDistance) {
+      return 12;
+    }
   }
 
-  return formatSearchResults(results);
+  return 0;
+}
+
+/**
+ * Calculates a relevance score for a product given search tokens.
+ */
+function scoreProduct(product, tokens, fullQuery) {
+  const meta = product.metadata_json || {};
+  const name = product.name || '';
+  const brand = meta.brand || '';
+  const dept = meta.department || '';
+  const sku = meta.sku || '';
+  const storeId = product.store_product_id || '';
+
+  const nameLower = name.toLowerCase();
+  const brandLower = brand.toLowerCase();
+  const deptLower = dept.toLowerCase();
+  const skuLower = sku.toLowerCase();
+  const storeIdLower = storeId.toLowerCase();
+
+  let score = 0;
+
+  // 1. Full phrase exact substring matches
+  if (fullQuery) {
+    if (nameLower.includes(fullQuery)) score += 80;
+    if (brandLower.includes(fullQuery)) score += 40;
+    if (deptLower.includes(fullQuery)) score += 30;
+    if (skuLower.includes(fullQuery) || storeIdLower === fullQuery) score += 60;
+  }
+
+  if (tokens.length === 0) {
+    return score + 10;
+  }
+
+  // Tokenize product fields into words
+  const nameWords = nameLower.split(/[\s\-_/]+/).filter(Boolean);
+  const brandWords = brandLower.split(/[\s\-_/]+/).filter(Boolean);
+  const deptWords = deptLower.split(/[\s\-_/]+/).filter(Boolean);
+  const skuWords = skuLower.split(/[\s\-_/]+/).filter(Boolean);
+
+  let matchedTokensCount = 0;
+
+  for (const token of tokens) {
+    let bestTokenScore = 0;
+
+    // Check store ID directly
+    if (storeIdLower === token || storeIdLower.includes(token)) {
+      bestTokenScore = Math.max(bestTokenScore, 45);
+    }
+
+    // Check name words (highest priority)
+    for (const w of nameWords) {
+      const s = tokenMatchesWord(token, w);
+      if (s * 1.5 > bestTokenScore) bestTokenScore = s * 1.5;
+    }
+
+    // Check brand words
+    for (const w of brandWords) {
+      const s = tokenMatchesWord(token, w);
+      if (s * 1.2 > bestTokenScore) bestTokenScore = s * 1.2;
+    }
+
+    // Check department words
+    for (const w of deptWords) {
+      const s = tokenMatchesWord(token, w);
+      if (s > bestTokenScore) bestTokenScore = s;
+    }
+
+    // Check SKU words
+    for (const w of skuWords) {
+      const s = tokenMatchesWord(token, w);
+      if (s * 1.1 > bestTokenScore) bestTokenScore = s * 1.1;
+    }
+
+    if (bestTokenScore > 0) {
+      matchedTokensCount++;
+      score += bestTokenScore;
+    }
+  }
+
+  // If none of the tokens matched at all, reject
+  if (matchedTokensCount === 0) return 0;
+
+  // Significant bonus if ALL tokens matched
+  if (matchedTokensCount === tokens.length) {
+    score += 40 * tokens.length;
+  } else {
+    // Penalize partial token matches when user typed multiple specific words
+    score -= (tokens.length - matchedTokensCount) * 15;
+  }
+
+  return score;
+}
+
+/**
+ * Searches catalog products using multi-token, stemming, and fuzzy matching,
+ * combined with category filtering.
+ */
+async function searchCatalogProducts(query, { category = null, limit = 50 } = {}) {
+  const allProducts = await getCachedCatalog();
+  const qClean = (query || '').trim().toLowerCase();
+  const catClean = (category || '').trim().toUpperCase();
+
+  // Step 1: Filter by category if specified (and not 'ALL')
+  let pool = allProducts;
+  if (catClean && catClean !== 'ALL') {
+    pool = pool.filter((p) => {
+      const dept = (p.metadata_json?.department || '').toUpperCase();
+      return dept === catClean || dept.includes(catClean);
+    });
+  }
+
+  // Step 2: If no search query, return the category products (or recent)
+  if (!qClean) {
+    return formatSearchResults(pool.slice(0, limit));
+  }
+
+  // Step 3: Tokenize query
+  const tokens = qClean
+    .split(/[\s,]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  // Step 4: Score each product
+  const scored = [];
+  for (const product of pool) {
+    const score = scoreProduct(product, tokens, qClean);
+    if (score > 0) {
+      scored.push({ product, score });
+    }
+  }
+
+  // Step 5: Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+
+  return formatSearchResults(scored.slice(0, limit).map((s) => s.product));
 }
 
 function formatSearchResults(rows) {
@@ -322,8 +504,15 @@ async function ensureCatalogWarm({ force = false, headed = false } = {}) {
  * If the catalog is empty and a sync isn't running, it triggers a
  * background sync and returns a helpful message.
  */
-async function searchProducts(query) {
-  const results = await searchCatalogProducts(query);
+/**
+ * Search function exposed to routes. Searches the DB immediately —
+ * never blocks on catalog warmup.
+ *
+ * If the catalog is empty and a sync isn't running, it triggers a
+ * background sync and returns a helpful message.
+ */
+async function searchProducts(query, { category = null, limit = 50 } = {}) {
+  const results = await searchCatalogProducts(query, { category, limit });
 
   if (results.length === 0) {
     // Check if catalog is empty
@@ -351,4 +540,5 @@ module.exports = {
   syncCatalogFromStore,
   ensureCatalogWarm,
   getCatalogCount,
+  invalidateCatalogCache,
 };
